@@ -1,8 +1,10 @@
 #[doc=include_str!("../Readme.md")]
+use dec_from_char_gen::digit_parse_mappings;
 
-use dec_from_char_gen::{digit_parse_mappings};
-
-pub trait DecimalExtended where Self: Sized + Copy {
+pub trait DecimalExtended
+where
+    Self: Sized + Copy,
+{
     /// Converts any decimal unicode digit in `Nd` category
     /// into `u8`. Returns `None` if no corresponding digit found.
     fn to_decimal_utf8(&self) -> Option<u8>;
@@ -17,29 +19,25 @@ pub trait DecimalExtended where Self: Sized + Copy {
 
 impl DecimalExtended for char {
     fn to_decimal_utf8(&self) -> Option<u8> {
-        return digit_parse_mappings!(self);
+        digit_parse_mappings!(self)
     }
 
     fn normalize_decimal(&self) -> Option<Self> {
-        self
-            .to_decimal_utf8()
-            .map(| d | (d+b'0') as char)   
+        self.to_decimal_utf8().map(|d| (d + b'0') as char)
     }
 }
 
 /// Returns string containing only normalized decimals from '0' to '9'
 /// If char is not decimal it will be removed
 pub fn normalize_decimals_filtering(s: &str) -> String {
-    s.chars()
-        .filter_map(| c | c.normalize_decimal())
-        .collect()
+    s.chars().filter_map(|c| c.normalize_decimal()).collect()
 }
 
 /// Returns string containing normalized decimals.
 /// If char did not match 'Nd' it keeps same
 pub fn normalize_decimals(s: &str) -> String {
     s.chars()
-        .map(| c | c.normalize_decimal().unwrap_or(c))
+        .map(|c| c.normalize_decimal().unwrap_or(c))
         .collect()
 }
 
@@ -80,7 +78,7 @@ mod tests {
         𝘸𝟢-𝟢𝟤𝟥𝟦.𝟥𝟦𝘧𝘸𝘦𝟢𝟫𝟪𝟥𝟤𝟦𝟪𝟫𝟤𝟥𝟫𝘳𝟪𝟢)𝟫𝟫𝘧𝘥𝘴𝘧
         🅆0-0234.34🄵🅆🄴09832489239🅁80)99🄵🄳🅂🄵
         🆆0-0234.34🅵🆆🅴09832489239🆁80)99🅵🅳🆂🅵
-        🇼​0-0234.34🇫​🇼​🇪​09832489239🇷​80)99🇫​🇩​🇸​🇫
+        🇼\u{200B}0-0234.34🇫\u{200B}🇼\u{200B}🇪\u{200B}09832489239🇷\u{200B}80)99🇫\u{200B}🇩\u{200B}🇸\u{200B}🇫
         𝔴0-0234.34𝔣𝔴𝔢09832489239𝔯80)99𝔣𝔡𝔰𝔣
         ẃ0-0234.34f́ẃé09832489239ŕ80)99f́d́śf́
         w̤0-0234.34f̤w̤e̤09832489239r̤80)99f̤d̤s̤f̤
@@ -90,11 +88,11 @@ mod tests {
         ";
 
         let mut line_number = 0;
-        text.lines()
-            .for_each(| line | {
-            let parsed = line.chars()
-                .filter_map(| c | c.to_decimal_utf8())
-                .map(| i | i.to_string())
+        text.lines().for_each(|line| {
+            let parsed = line
+                .chars()
+                .filter_map(|c| c.to_decimal_utf8())
+                .map(|i| i.to_string())
                 .collect::<String>();
 
             line_number += 1;
@@ -103,8 +101,10 @@ mod tests {
             assert_eq!(parsed.as_str(), expected_result);
             assert_eq!(normalize_decimals_filtering(line), expected_result);
             println!("{}", normalize_decimals(line));
-            println!("{}", normalize_decimals("Phone number: （０）𝟗𝟖-𝟳𝟲𝟱 and pin: ٣-١-٤-١"))
+            println!(
+                "{}",
+                normalize_decimals("Phone number: （０）𝟗𝟖-𝟳𝟲𝟱 and pin: ٣-١-٤-١")
+            )
         });
-
     }
 }

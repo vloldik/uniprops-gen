@@ -5,7 +5,7 @@ use quote::{format_ident, quote};
 use serde::Deserialize;
 
 /// Category for digits in UnicodeData.txt
-const NUMERIC_CATEGORY: &str = "Nd"; 
+const NUMERIC_CATEGORY: &str = "Nd";
 
 /// Represents a single entry (line) in the UnicodeData.txt file.
 ///
@@ -63,12 +63,12 @@ struct UnicodeRecord {
 #[derive(Debug)]
 struct NormalizationReplacement {
     normalized_unicode_char: char,
-    ascii_char: u32
+    ascii_char: u32,
 }
 
 fn extract_unicode_char(hex_code_digits: &str) -> char {
     u32::from_str_radix(hex_code_digits, 16)
-        .map(| parsed | char::from_u32(parsed) )
+        .map(char::from_u32)
         .unwrap()
         .expect("Hex MUST be valid unicode")
 }
@@ -81,29 +81,32 @@ fn parse_digit_mappings() -> Vec<NormalizationReplacement> {
         .delimiter(b';')
         .from_reader(reader);
 
-    parser.deserialize::<UnicodeRecord>()
+    parser
+        .deserialize::<UnicodeRecord>()
         .flatten()
-        .filter(| res| res.general_category == NUMERIC_CATEGORY)
-        .map(| res | NormalizationReplacement{
+        .filter(|res| res.general_category == NUMERIC_CATEGORY)
+        .map(|res| NormalizationReplacement {
             normalized_unicode_char: extract_unicode_char(&res.code_point),
-            ascii_char: res.decimal_digit_value.expect("all \\Nd should have decimal value")
+            ascii_char: res
+                .decimal_digit_value
+                .expect("all \\Nd should have decimal value"),
         })
         .collect()
 }
 
-/// This macro creates 'match' structure for each decimal digit with category 
-/// `\Nd` in unicode `UnicodeData.txt`. 
-/// 
+/// This macro creates 'match' structure for each decimal digit with category
+/// `\Nd` in unicode `UnicodeData.txt`.
+///
 /// Since data for parsing is downloaded, saved in git and tested it should always compile.
 #[proc_macro]
 pub fn digit_parse_mappings(item: TokenStream) -> TokenStream {
     let mappings = parse_digit_mappings()
         .iter()
-        .map(| r | {
+        .map(|r| {
             let match_char = r.normalized_unicode_char;
             let ascii_digit = r.ascii_char;
             quote! {
-                #match_char => Some(#ascii_digit as u8)
+                #match_char => ::std::option::Option::Some(#ascii_digit as u8)
             }
         })
         .collect::<Vec<_>>();
@@ -112,7 +115,8 @@ pub fn digit_parse_mappings(item: TokenStream) -> TokenStream {
     quote! {
         match #item {
             #(#mappings,)*
-            _ => None
+            _ => ::std::option::Option::None
         }
-    }.into()
+    }
+    .into()
 }

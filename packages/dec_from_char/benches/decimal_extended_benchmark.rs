@@ -1,7 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use dec_from_char::DecimalExtended;
-
 
 fn benchmark_decimal_extended_string(c: &mut Criterion) {
     let text = "\
@@ -19,7 +18,7 @@ fn benchmark_decimal_extended_string(c: &mut Criterion) {
         𝘸𝟢-𝟢𝟤𝟥𝟦.𝟥𝟦𝘧𝘸𝘦𝟢𝟫𝟪𝟥𝟤𝟦𝟪𝟫𝟤𝟥𝟫𝘳𝟪𝟢)𝟫𝟫𝘧𝘥𝘴𝘧
         🅆0-0234.34🄵🅆🄴09832489239🅁80)99🄵🄳🅂🄵
         🆆0-0234.34🅵🆆🅴09832489239🆁80)99🅵🅳🆂🅵
-        🇼​0-0234.34🇫​🇼​🇪​09832489239🇷​80)99🇫​🇩​🇸​🇫
+        🇼\u{200B}0-0234.34🇫\u{200B}🇼\u{200B}🇪\u{200B}09832489239🇷\u{200B}80)99🇫\u{200B}🇩\u{200B}🇸\u{200B}🇫
         𝔴0-0234.34𝔣𝔴𝔢09832489239𝔯80)99𝔣𝔡𝔰𝔣
         ẃ0-0234.34f́ẃé09832489239ŕ80)99f́d́śf́
         w̤0-0234.34f̤w̤e̤09832489239r̤80)99f̤d̤s̤f̤
@@ -38,7 +37,6 @@ fn benchmark_decimal_extended_string(c: &mut Criterion) {
     });
 }
 
-
 fn benchmark_decimal_extended_char(c: &mut Criterion) {
     let mut group = c.benchmark_group("to_decimal_utf8_char");
 
@@ -46,28 +44,26 @@ fn benchmark_decimal_extended_char(c: &mut Criterion) {
         b.iter(|| black_box('7').to_digit(10))
     });
 
-    
     group.bench_function("Full-width digit", |b| {
         b.iter(|| black_box('７').to_decimal_utf8())
     });
 
-    
     group.bench_function("Devanagari digit", |b| {
         b.iter(|| black_box('९').to_decimal_utf8())
     });
 
-    
     group.bench_function("Arabic digit", |b| {
         b.iter(|| black_box('٣').to_decimal_utf8())
     });
 
-    
-    group.bench_function("Non-digit", |b| {
-        b.iter(|| black_box('a').to_decimal_utf8())
-    });
+    group.bench_function("Non-digit", |b| b.iter(|| black_box('a').to_decimal_utf8()));
 
     group.finish();
 }
 
-criterion_group!(benches, benchmark_decimal_extended_string, benchmark_decimal_extended_char);
+criterion_group!(
+    benches,
+    benchmark_decimal_extended_string,
+    benchmark_decimal_extended_char
+);
 criterion_main!(benches);
