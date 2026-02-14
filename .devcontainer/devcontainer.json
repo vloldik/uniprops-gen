@@ -1,0 +1,22 @@
+{
+  "name": "Rust Dev Environment",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "lldb.executable": "/usr/bin/lldb",
+        "rust-analyzer.check.command": "clippy",
+        "remote.downloadExtensionsLocally": true,
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "1YiB.rust-bundle"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}
