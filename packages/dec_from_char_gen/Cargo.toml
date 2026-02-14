@@ -1,8 +1,8 @@
 [package]
 name = "dec_from_char_gen"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
-license = "MIT OR Apache-2.0" 
+license = "MIT OR Apache-2.0"
 description = "Gen package for dec_from_char library"
 
 [dependencies]

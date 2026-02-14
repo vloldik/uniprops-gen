@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = [ "packages/dec_from_char","packages/dec_from_char_gen"]
+members = ["packages/dec_from_char", "packages/dec_from_char_gen"]
 
 [workspace.dependencies]
 
+[workspace.package]
+readme = "Readme.md"

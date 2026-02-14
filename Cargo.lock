@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "dec_from_char"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "criterion",
  "dec_from_char_gen",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "dec_from_char_gen"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "csv",
  "quote",
