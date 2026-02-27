@@ -1,5 +1,5 @@
 [package]
-name = "dec_from_char"
+name = "uniprops"
 version = "0.2.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -8,11 +8,11 @@ authors = ["vloldik (@vloldik)"]
 keywords = ["text", "unicode", "decimal"]
 categories = ["text-processing"]
 readme = { workspace = true }
-repository = "https://github.com/vloldik/dec_from_char"
-documentation = "https://docs.rs/dec_from_char"
+repository = "https://github.com/vloldik/uniprops"
+documentation = "https://docs.rs/uniprops"
 
 [dependencies]
-dec_from_char_gen = { path = "../dec_from_char_gen", version = "0.2.1" }
+uniprops_gen = { path = "../uniprops_gen", version = "0.2.1" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

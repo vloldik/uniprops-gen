@@ -8,14 +8,6 @@ ARG USER_GID=$USER_UID
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
 
-RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install --no-install-recommends \
-       build-essential \
-       cmake \
-       pkg-config \
-       lldb
-
-
 RUN chown -R $USERNAME:$USERNAME /usr/local/cargo
 USER $USERNAME
 RUN rustup component add clippy rustfmt

@@ -1,6 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use dec_from_char::DecimalExtended;
+use uniprops::DecimalExtended;
 
 fn benchmark_decimal_extended_string(c: &mut Criterion) {
     let text = "\

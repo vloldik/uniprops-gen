@@ -1,7 +1,7 @@
 # Extended Decimal
 
-[![Crates.io](https://img.shields.io/crates/v/dec_from_char.svg)](https://crates.io/crates/dec_from_char)
-[![Docs.rs](https://docs.rs/dec_from_char/badge.svg)](https://docs.rs/dec_from_char)
+[![Crates.io](https://img.shields.io/crates/v/uniprops.svg)](https://crates.io/crates/uniprops)
+[![Docs.rs](https://docs.rs/uniprops/badge.svg)](https://docs.rs/uniprops)
 [![License: MIT](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/MIT)
 
 A tiny, zero-cost Rust library to correctly parse *any* Unicode decimal digit.
@@ -17,17 +17,17 @@ Ever needed to parse a number from a string, but it might contain digits from ot
 
 ## Quick Start
 
-1.  Add `dec_from_char` to your `Cargo.toml`:
+1.  Add `uniprops` to your `Cargo.toml`:
 
     ```toml
     [dependencies]
-    dec_from_char = "0.2.0" # Replace with the latest version
+    uniprops = "0.2.0" # Replace with the latest version
     ```
 
 2.  Use the `DecimalExtended` trait to convert characters.
 
     ```rust
-    use dec_from_char::DecimalExtended;
+    use uniprops::DecimalExtended;
 
     fn main() {
         // Works for common ASCII digits
@@ -55,7 +55,7 @@ Ever needed to parse a number from a string, but it might contain digits from ot
 This crate makes it trivial to extract numbers from text, no matter how they are formatted.
 
 ```rust
-use dec_from_char::DecimalExtended;
+use uniprops::DecimalExtended;
 
 let messy_string = "Phone number: （０）𝟗𝟖-𝟳𝟲𝟱 and pin: ٣-١-٤-١";
 

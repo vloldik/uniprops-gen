@@ -1,4 +1,4 @@
-use dec_from_char_gen::digit_parse_mappings;
+use uniprops_gen::digit_parse_mappings;
 
 pub trait DecimalExtended
 where
