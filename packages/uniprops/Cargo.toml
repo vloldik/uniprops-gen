@@ -12,7 +12,7 @@ repository = "https://github.com/vloldik/uniprops"
 documentation = "https://docs.rs/uniprops"
 
 [dependencies]
-uniprops_gen = { path = "../uniprops_gen", version = "0.2.1" }
+uniprops-gen = { path = "../uniprops_gen", version = "0.2.1" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

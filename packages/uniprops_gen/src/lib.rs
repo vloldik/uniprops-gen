@@ -1,4 +1,4 @@
-use std::io::BufReader;
+use std::{collections::HashSet, io::BufReader};
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -11,7 +11,7 @@ const NUMERIC_CATEGORY: &str = "Nd";
 ///
 /// The fields correspond to the specification described in Unicode Standard Annex #44.
 /// https://www.unicode.org/reports/tr44/#UnicodeData.txt
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 struct UnicodeRecord {
     /// Field 0: The character's code point in hexadecimal format.
@@ -73,7 +73,7 @@ fn extract_unicode_char(hex_code_digits: &str) -> char {
         .expect("Hex MUST be valid unicode")
 }
 
-fn parse_digit_mappings() -> Vec<NormalizationReplacement> {
+fn parse_mappings<T>(callback: impl Fn(UnicodeRecord) -> Option<T>) -> Vec<T> {
     let file = include_str!("../assets/UnicodeData.txt");
     let reader = BufReader::new(file.as_bytes());
     let mut parser = csv::ReaderBuilder::new()
@@ -84,14 +84,22 @@ fn parse_digit_mappings() -> Vec<NormalizationReplacement> {
     parser
         .deserialize::<UnicodeRecord>()
         .flatten()
-        .filter(|res| res.general_category == NUMERIC_CATEGORY)
-        .map(|res| NormalizationReplacement {
+        .flat_map(callback)
+        .collect()
+}
+
+fn parse_digit_mappings() -> Vec<NormalizationReplacement> {
+    parse_mappings(|res| {
+        if res.general_category != NUMERIC_CATEGORY {
+            return None;
+        }
+        Some(NormalizationReplacement {
             normalized_unicode_char: extract_unicode_char(&res.code_point),
             ascii_char: res
                 .decimal_digit_value
                 .expect("all \\Nd should have decimal value"),
         })
-        .collect()
+    })
 }
 
 /// This macro creates 'match' structure for each decimal digit with category
@@ -119,4 +127,49 @@ pub fn digit_parse_mappings(item: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+#[proc_macro]
+pub fn generate_categories(_item: TokenStream) -> TokenStream {
+    let records =
+        parse_mappings(|res| Some((extract_unicode_char(&res.code_point), res.general_category)));
+
+    let mut unique_categories: Vec<String> = records
+        .iter()
+        .map(|(_, cat)| cat.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    unique_categories.sort();
+
+    let enum_variants = unique_categories.iter().map(|cat| {
+        let ident = format_ident!("{}", cat);
+        quote! { #ident }
+    });
+
+    let match_arms = records.iter().map(|(c, cat)| {
+        let ident = format_ident!("{}", cat);
+        quote! {
+            #c => ::std::option::Option::Some(Category::#ident)
+        }
+    });
+
+    let expanded = quote! {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Category {
+            #(#enum_variants),*
+        }
+
+        impl Category {
+            pub fn from_char(c: char) -> ::std::option::Option<Self> {
+                match c {
+                    #(#match_arms,)*
+                    _ => ::std::option::Option::None,
+                }
+            }
+        }
+    };
+
+    expanded.into()
 }

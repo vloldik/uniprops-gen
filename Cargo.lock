@@ -464,14 +464,15 @@ name = "uniprops"
 version = "0.2.1"
 dependencies = [
  "criterion",
- "uniprops_gen",
+ "uniprops-gen",
 ]
 
 [[package]]
-name = "uniprops_gen"
+name = "uniprops-gen"
 version = "0.2.1"
 dependencies = [
  "csv",
+ "proc-macro2",
  "quote",
  "serde",
 ]
