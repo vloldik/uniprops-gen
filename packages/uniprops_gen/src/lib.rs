@@ -1,6 +1,14 @@
+// build.rs
 use quote::{format_ident, quote};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::{collections::HashSet, io::BufReader};
+use serde::{Deserialize, Deserializer};
+use std::{
+    collections::HashSet,
+    env,
+    fs::File,
+    io::{BufReader, Write},
+    path::Path,
+    process::Command,
+};
 
 fn deserialize_hex_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
@@ -10,7 +18,7 @@ where
     u32::from_str_radix(&s, 16).map_err(serde::de::Error::custom)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct UnicodeRecord {
     #[serde(deserialize_with = "deserialize_hex_u32")]
@@ -50,241 +58,319 @@ fn get_tag_by_name(name: &str) -> PositionTag {
     }
 }
 
-const UNICODE_DATA: &str = include_str!("../assets/UnicodeData.txt");
-
-fn parse_filtered_mappings(
-    filter: impl Fn(&UnicodeRecord) -> bool,
-) -> Result<Vec<UnicodeRecord>, String> {
-    let reader = BufReader::new(UNICODE_DATA.as_bytes());
-    let mut parser = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .delimiter(b';')
-        .from_reader(reader);
-
-    let mut raw_data = Vec::new();
-    for result in parser.deserialize::<UnicodeRecord>() {
-        let record = result.map_err(|e| format!("CSV Parse Error: {}", e))?;
-        if filter(&record) {
-            raw_data.push(record);
-        }
-    }
-
-    raw_data.sort_by_key(|r| r.code_point);
-    Ok(raw_data)
+pub struct UnipropsBuilder<'a> {
+    out_name: String,
+    gen_categories: bool,
+    gen_digits: bool,
+    filter: Box<dyn Fn(&UnicodeRecord) -> bool + 'a>,
 }
 
-pub fn generate_categories(filter: impl Fn(&UnicodeRecord) -> bool) -> Result<String, String> {
-    const SHIFT: u32 = 8;
-    const SIZE: u32 = 1 << SHIFT;
-    const MASK: u32 = SIZE - 1;
-
-    let raw_data = parse_filtered_mappings(filter)?;
-
-    struct MappingGroup {
-        general_category: String,
-        start: u32,
-        end: u32,
+impl<'a> UnipropsBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            out_name: "generated_uniprops.rs".to_string(),
+            gen_categories: true,
+            gen_digits: true,
+            filter: Box::new(|_| true),
+        }
     }
 
-    let mut mapping_groups = Vec::new();
+    pub fn out_file(mut self, name: &str) -> Self {
+        self.out_name = name.to_string();
+        self
+    }
 
-    if !raw_data.is_empty() {
-        let record = &raw_data[0];
-        let mut current_group = MappingGroup {
-            general_category: record.general_category.clone(),
-            start: record.code_point,
-            end: record.code_point,
-        };
+    pub fn with_categories(mut self, enable: bool) -> Self {
+        self.gen_categories = enable;
+        self
+    }
 
-        for record in raw_data.iter().skip(1) {
-            let was_groupped = get_tag_by_name(&record.name) == PositionTag::Last;
-            if (record.code_point == current_group.end + 1
-                && record.general_category == current_group.general_category)
-                || was_groupped
-            {
-                current_group.end = record.code_point;
-            } else {
-                mapping_groups.push(current_group);
-                current_group = MappingGroup {
-                    general_category: record.general_category.clone(),
-                    start: record.code_point,
-                    end: record.code_point,
-                };
+    pub fn with_digits(mut self, enable: bool) -> Self {
+        self.gen_digits = enable;
+        self
+    }
+
+    pub fn filter<F>(mut self, filter: F) -> Self
+    where
+        F: Fn(&UnicodeRecord) -> bool + 'a,
+    {
+        self.filter = Box::new(filter);
+        self
+    }
+
+    pub fn build(self) {
+        let raw_data = self.parse_data();
+
+        let mut tokens = quote! {
+            #![allow(clippy::all)]
+            #![allow(dead_code)]
+            #![allow(non_upper_case_globals)]
+        }
+        .to_string();
+
+        if self.gen_categories {
+            let cat_tokens = self.generate_categories(&raw_data);
+            tokens += cat_tokens.as_str();
+        }
+
+        if self.gen_digits {
+            let dig_tokens = self.generate_digits(&raw_data);
+            tokens += dig_tokens.as_str();
+        }
+
+        let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set by cargo");
+        let dest_path = Path::new(&out_dir).join(&self.out_name);
+
+        let mut file = File::create(&dest_path).expect("Failed to create output file");
+        file.write_all(tokens.to_string().as_bytes())
+            .expect("Failed to write to output file");
+
+        let _ = Command::new("rustfmt").arg(&dest_path).status();
+    }
+
+    fn parse_data(&self) -> Vec<UnicodeRecord> {
+        let reader = BufReader::new(include_str!("../assets/UnicodeData.txt").as_bytes());
+        let mut parser = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(b';')
+            .from_reader(reader);
+
+        let mut raw_data = Vec::new();
+        for result in parser.deserialize::<UnicodeRecord>() {
+            let record = result.expect("CSV Parse Error");
+            if (self.filter)(&record) {
+                raw_data.push(record);
             }
         }
-        mapping_groups.push(current_group);
+        raw_data.sort_by_key(|r| r.code_point);
+        raw_data
     }
 
-    let mut unique_categories: Vec<String> = mapping_groups
-        .iter()
-        .map(|g| g.general_category.clone())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
+    fn generate_categories(&self, raw_data: &[UnicodeRecord]) -> String {
+        const SHIFT: u32 = 8;
+        const SIZE: u32 = 1 << SHIFT;
+        const MASK: u32 = SIZE - 1;
 
-    unique_categories.sort();
+        struct MappingGroup {
+            general_category: String,
+            start: u32,
+            end: u32,
+        }
 
-    let enum_variants = unique_categories.iter().map(|cat| {
-        let ident = format_ident!("{}", cat);
-        quote! { #ident }
-    });
+        let mut mapping_groups = Vec::new();
 
-    let max_codepoint: u32 = 0x10FFFF;
-    let mut unique_blocks: Vec<Vec<Option<String>>> = Vec::new();
-    let mut indices: Vec<usize> = Vec::new();
-    let mut group_iter = mapping_groups.iter();
-    let mut current_group = group_iter.next();
+        if !raw_data.is_empty() {
+            let record = &raw_data[0];
+            let mut current_group = MappingGroup {
+                general_category: record.general_category.clone(),
+                start: record.code_point,
+                end: record.code_point,
+            };
 
-    for chunk_start in (0..=max_codepoint).step_by(SIZE as usize) {
-        let mut block = Vec::with_capacity(SIZE as usize);
-
-        for i in 0..SIZE {
-            let cp = chunk_start + i;
-            while let Some(g) = current_group {
-                if cp > g.end {
-                    current_group = group_iter.next();
+            for record in raw_data.iter().skip(1) {
+                let was_groupped = get_tag_by_name(&record.name) == PositionTag::Last;
+                if (record.code_point == current_group.end + 1
+                    && record.general_category == current_group.general_category)
+                    || was_groupped
+                {
+                    current_group.end = record.code_point;
                 } else {
-                    break;
+                    mapping_groups.push(current_group);
+                    current_group = MappingGroup {
+                        general_category: record.general_category.clone(),
+                        start: record.code_point,
+                        end: record.code_point,
+                    };
                 }
             }
+            mapping_groups.push(current_group);
+        }
 
-            let category = if let Some(g) = current_group {
-                if cp >= g.start && cp <= g.end {
-                    Some(g.general_category.clone())
+        let mut unique_categories: Vec<String> = mapping_groups
+            .iter()
+            .map(|g| g.general_category.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        unique_categories.sort();
+
+        let enum_variants = unique_categories.iter().map(|cat| {
+            let ident = format_ident!("{}", cat);
+            quote! { #ident }
+        });
+
+        let max_codepoint: u32 = 0x10FFFF;
+        let mut unique_blocks: Vec<Vec<Option<String>>> = Vec::new();
+        let mut indices: Vec<usize> = Vec::new();
+        let mut group_iter = mapping_groups.iter();
+        let mut current_group = group_iter.next();
+
+        for chunk_start in (0..=max_codepoint).step_by(SIZE as usize) {
+            let mut block = Vec::with_capacity(SIZE as usize);
+
+            for i in 0..SIZE {
+                let cp = chunk_start + i;
+                while let Some(g) = current_group {
+                    if cp > g.end {
+                        current_group = group_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                let category = if let Some(g) = current_group {
+                    if cp >= g.start && cp <= g.end {
+                        Some(g.general_category.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
+                };
+                block.push(category);
+            }
+
+            if let Some(idx) = unique_blocks.iter().position(|b| b == &block) {
+                indices.push(idx);
             } else {
-                None
-            };
-            block.push(category);
+                indices.push(unique_blocks.len());
+                unique_blocks.push(block);
+            }
         }
 
-        if let Some(idx) = unique_blocks.iter().position(|b| b == &block) {
-            indices.push(idx);
+        let index_type = if unique_blocks.len() <= 256 {
+            quote! { u8 }
         } else {
-            indices.push(unique_blocks.len());
-            unique_blocks.push(block);
-        }
-    }
+            quote! { u16 }
+        };
+        let indices_tokens = indices.iter().map(|&idx| {
+            if unique_blocks.len() <= 256 {
+                let val = idx as u8;
+                quote! { #val }
+            } else {
+                let val = idx as u16;
+                quote! { #val }
+            }
+        });
 
-    let index_type = if unique_blocks.len() <= 256 {
-        quote! { u8 }
-    } else {
-        quote! { u16 }
-    };
-    let indices_tokens = indices.iter().map(|&idx| {
-        if unique_blocks.len() <= 256 {
-            let val = idx as u8;
-            quote! { #val }
-        } else {
-            let val = idx as u16;
-            quote! { #val }
-        }
-    });
+        let indices_len = indices.len();
+        let blocks_tokens = unique_blocks.iter().flatten().map(|opt_cat| match opt_cat {
+            Some(cat) => {
+                let ident = format_ident!("{}", cat);
+                quote! { Some(Category::#ident) }
+            }
+            None => quote! { None },
+        });
+        let blocks_len = unique_blocks.len() * (SIZE as usize);
 
-    let indices_len = indices.len();
-    let blocks_tokens = unique_blocks.iter().flatten().map(|opt_cat| match opt_cat {
-        Some(cat) => {
-            let ident = format_ident!("{}", cat);
-            quote! { Some(Category::#ident) }
-        }
-        None => quote! { None },
-    });
-    let blocks_len = unique_blocks.len() * (SIZE as usize);
+        quote! {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum Category {
+                #(#enum_variants),*
+            }
 
-    Ok(quote! {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum Category {
-            #(#enum_variants),*
-        }
+            static CATEGORY_INDICES:[#index_type; #indices_len] = [
+                #(#indices_tokens),*
+            ];
 
-        static CATEGORY_INDICES:[#index_type; #indices_len] = [
-            #(#indices_tokens),*
-        ];
+            static CATEGORY_BLOCKS: [Option<Category>; #blocks_len] =[
+                #(#blocks_tokens),*
+            ];
 
-        static CATEGORY_BLOCKS: [Option<Category>; #blocks_len] =[
-            #(#blocks_tokens),*
-        ];
+            impl Category {
+                #[inline(always)]
+                pub fn from_char(c: char) -> ::std::option::Option<Self> {
+                    let cp = c as u32;
+                    if cp > #max_codepoint { return None; }
 
-        impl Category {
-            #[inline(always)]
-            pub fn from_char(c: char) -> ::std::option::Option<Self> {
-                let cp = c as u32;
-                if cp > #max_codepoint { return None; }
+                    let index_idx = (cp >> #SHIFT) as usize;
 
-                let index_idx = (cp >> #SHIFT) as usize;
-
-                // SAFETY: Arrays are generated to cover up to 0x10FFFF
-                unsafe {
-                    let block_idx = *CATEGORY_INDICES.get_unchecked(index_idx) as usize;
-                    let offset = (cp & #MASK) as usize;
-                    let final_pos = (block_idx << #SHIFT) + offset;
-                    *CATEGORY_BLOCKS.get_unchecked(final_pos)
+                    // SAFETY: Arrays are generated to cover up to 0x10FFFF
+                    unsafe {
+                        let block_idx = *CATEGORY_INDICES.get_unchecked(index_idx) as usize;
+                        let offset = (cp & #MASK) as usize;
+                        let final_pos = (block_idx << #SHIFT) + offset;
+                        *CATEGORY_BLOCKS.get_unchecked(final_pos)
+                    }
                 }
             }
         }
+        .to_string()
     }
-    .to_string())
+
+    fn generate_digits(&self, raw_data: &[UnicodeRecord]) -> String {
+        struct DigitRange {
+            start: u32,
+            end: u32,
+            base_val: u8,
+        }
+
+        let mut ranges: Vec<DigitRange> = Vec::new();
+
+        for r in raw_data {
+            let Some(dig_val) = r.decimal_digit_value else {
+                continue;
+            };
+            let dig_val = dig_val as u8;
+
+            if let Some(last) = ranges.last_mut() {
+                let is_contiguous_cp = r.code_point == last.end + 1;
+                let expected_val = last.base_val as u32 + (r.code_point - last.start);
+
+                if is_contiguous_cp && dig_val as u32 == expected_val {
+                    last.end = r.code_point;
+                    continue;
+                }
+            }
+            ranges.push(DigitRange {
+                start: r.code_point,
+                end: r.code_point,
+                base_val: dig_val,
+            });
+        }
+
+        let starts: Vec<u32> = ranges.iter().map(|r| r.start).collect();
+        let ends: Vec<u32> = ranges.iter().map(|r| r.end).collect();
+        let bases: Vec<u8> = ranges.iter().map(|r| r.base_val).collect();
+        let len = ranges.len();
+
+        quote! {
+            static DIGIT_STARTS: [u32; #len] = [ #(#starts),* ];
+            static DIGIT_ENDS:   [u32; #len] = [ #(#ends),*   ];
+            static DIGIT_BASES:  [u8;  #len] = [ #(#bases),*  ];
+
+            #[inline(always)]
+            pub fn get_digit_value(c: char) -> ::std::option::Option<u8> {
+                let cp = c as u32;
+
+                // Fast path for ascii
+                if cp <= 0x7F {
+                    return if cp >= 0x30 && cp <= 0x39 { // '0'..='9'
+                        ::std::option::Option::Some((cp - 0x30) as u8)
+                    } else {
+                        ::std::option::Option::None
+                    };
+                }
+
+                let idx = DIGIT_STARTS.partition_point(|&start| start <= cp);
+
+                if idx > 0 {
+                    let i = idx - 1;
+                    if cp <= DIGIT_ENDS[i] {
+                        let offset = cp - DIGIT_STARTS[i];
+                        return ::std::option::Option::Some(DIGIT_BASES[i] + offset as u8);
+                    }
+                }
+                ::std::option::Option::None
+            }
+        }
+        .to_string()
+    }
 }
 
-pub fn generate_digits(filter: impl Fn(&UnicodeRecord) -> bool) -> Result<String, String> {
-    let raw_data = parse_filtered_mappings(filter)?;
-
-    struct DigitRange {
-        start: u32,
-        end: u32,
-        base_val: u8,
+impl<'a> Default for UnipropsBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
     }
-
-    let mut ranges: Vec<DigitRange> = Vec::new();
-
-    for r in raw_data {
-        let Some(dig_val) = r.decimal_digit_value else {
-            continue;
-        };
-        let dig_val = dig_val as u8;
-
-        if let Some(last) = ranges.last_mut() {
-            let is_contiguous_cp = r.code_point == last.end + 1;
-            let expected_val = last.base_val as u32 + (r.code_point - last.start);
-
-            if is_contiguous_cp && dig_val as u32 == expected_val {
-                last.end = r.code_point;
-                continue;
-            }
-        }
-        ranges.push(DigitRange {
-            start: r.code_point,
-            end: r.code_point,
-            base_val: dig_val,
-        });
-    }
-
-    let starts: Vec<u32> = ranges.iter().map(|r| r.start).collect();
-    let ends: Vec<u32> = ranges.iter().map(|r| r.end).collect();
-    let bases: Vec<u8> = ranges.iter().map(|r| r.base_val).collect();
-    let len = ranges.len();
-
-    Ok(quote! {
-        static DIGIT_STARTS: [u32; #len] = [ #(#starts),* ];
-        static DIGIT_ENDS:   [u32; #len] = [ #(#ends),*   ];
-        static DIGIT_BASES:  [u8;  #len] = [ #(#bases),*  ];
-
-        #[inline(always)]
-        pub fn get_digit_value(c: char) -> ::std::option::Option<u8> {
-            let cp = c as u32;
-            let idx = DIGIT_STARTS.partition_point(|&start| start <= cp);
-
-            if idx > 0 {
-                let i = idx - 1;
-                if cp <= DIGIT_ENDS[i] {
-                    let offset = cp - DIGIT_STARTS[i];
-                    return ::std::option::Option::Some(DIGIT_BASES[i] + offset as u8);
-                }
-            }
-            ::std::option::Option::None
-        }
-    }
-    .to_string())
 }

@@ -1,5 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use tests::generated::{self, Category, get_digit_value};
+use tests::generated::{Category, get_digit_value};
 
 const TEST_TEXT: &str =  "\
         ｗ０-０２３４.３４ｆｗｅ０９８３２４８９２３９ｒ８０)９９ｆｄｓｆ
