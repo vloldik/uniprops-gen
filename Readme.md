@@ -1,105 +1,99 @@
-# Extended Decimal
+# UniProps-gen
 
-[![Crates.io](https://img.shields.io/crates/v/uniprops.svg)](https://crates.io/crates/uniprops)
-[![Docs.rs](https://docs.rs/uniprops/badge.svg)](https://docs.rs/uniprops)
-[![License: MIT](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/MIT)
+[![Crates.io](https://img.shields.io/crates/v/uniprops-gen.svg)](https://crates.io/crates/uniprops-gen)
+[![Docs.rs](https://docs.rs/uniprops-gen/badge.svg)](https://docs.rs/uniprops-gen)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/MIT)
 
-A tiny, zero-cost Rust library to correctly parse *any* Unicode decimal digit.
+**UniProps** is a blazing-fast, compile-time Unicode property generator for Rust. It generates highly optimized static tables to look up Unicode General Categories and Numeric Values with zero runtime allocation.
 
-Ever needed to parse a number from a string, but it might contain digits from other languages like `९` (Devanagari nine) or `٣` (Arabic-Indic three)? The standard `char::to_digit` in Rust only handles ASCII digits well. This crate extends that power to all Unicode characters in the "Decimal Number (`Nd`)" category.
+> **Note:** This project is a complete evolution and fork of my previous project, `dec-from-char`. While `dec-from-char` focused solely on parsing decimal digits, **UniProps** generalizes this approach. It allows you to generate efficient data structures for *any* subset of Unicode data directly via `build.rs`.
 
-## Features
+## Todo
+* Update metadata actions pipeline
 
-*   **Blazing Fast:** All Unicode mappings are resolved at compile-time into a highly efficient `match` statement. This means converting a character at runtime is a zero-cost abstraction with no overhead.
-*   **Simple API:** Provides a straightforward extension trait, `DecimalExtended`, for the `char` type. If you know how to use Rust, you already know how to use this.
-*   **Self-Contained:** The necessary Unicode data is bundled into the crate, so you don't need to worry about external files or runtime downloads.
-*   **Comprehensive:** Correctly identifies and converts all decimal digits across various scripts as defined by the Unicode Standard.
+## 🚀 Features
 
-## Quick Start
+*   **Unmatched Performance:**
+    *   **Categories:** Uses a **Two-Level Trie** (Index Table + Data Blocks) for true **O(1)** access.
+*   **Zero Runtime Allocation:** All data is baked into your binary as standard `static` arrays.
+*   **Customizable:** Generate only what you need. Filter by specific categories (e.g., only `Nd` digits) to drastically reduce your binary size.
+*   **Safe API:** Generated code relies on safe wrappers around bounded `unsafe` lookups, ensuring maximum speed without bounds-checking overhead, while remaining 100% memory safe.
 
-1.  Add `uniprops` to your `Cargo.toml`:
+## ⚡ Benchmarks
 
-    ```toml
-    [dependencies]
-    uniprops = "0.2.0" # Replace with the latest version
-    ```
+| Method | Operation | Time / iter | Notes |
+| :--- | :--- | :--- | :--- |
+| **Rust Standard Library** | `char::is_numeric()` | **~7.66 ns** | Standard `std` implementation |
+| **UniProps Digits** | `get_digit_value(c)` | **~6.15 ns** | **~20% Faster** on mixed text |
+| **UniProps Categories** | `Category::from_char(c)` | **~5.22 ns** | **~32% Faster** (O(1) Trie lookup) |
 
-2.  Use the `DecimalExtended` trait to convert characters.
+## 📦 Installation
 
-    ```rust
-    use uniprops::DecimalExtended;
+Add `uniprops-gen` to your `[build-dependencies]` in `Cargo.toml`. 
 
-    fn main() {
-        // Works for common ASCII digits
-        assert_eq!('7'.to_decimal_utf8(), Some(7));
-
-        // And for a wide range of other Unicode digits!
-        assert_eq!('९'.to_decimal_utf8(), Some(9)); // Devanagari
-        assert_eq!('०'.to_decimal_utf8(), Some(0)); // Devanagari
-        assert_eq!('７'.to_decimal_utf8(), Some(7)); // Fullwidth
-        assert_eq!('٣'.to_decimal_utf8(), Some(3)); // Extended Arabic-Indic
-
-        // It gracefully returns None for non-digit characters
-        assert_eq!('a'.to_decimal_utf8(), None);
-        assert_eq!('🎉'.to_decimal_utf8(), None);
-
-        // Normalization
-        assert_eq!('٣'.normalize_decimal(), Some('3'));
-        assert_eq!('７'.normalize_decimal(), Some('7'));
-        assert_eq!('🎉'.normalize_decimal(), None);
-    }
-    ```
-
-## Example: Parsing Numbers from a Mixed-Script String
-
-This crate makes it trivial to extract numbers from text, no matter how they are formatted.
-
-```rust
-use uniprops::DecimalExtended;
-
-let messy_string = "Phone number: （０）𝟗𝟖-𝟳𝟲𝟱 and pin: ٣-١-٤-١";
-
-let digits: String = messy_string.chars()
-    .filter_map(|c| c.normalize_decimal()) // Convert each char to a digit if possible
-    .collect();
-
-assert_eq!(digits, "0987653141");
-
-// you can do the same with `normalize_decimals_filtering`
-assert_eq!(normalize_decimals_filtering(messy_string) "0987653141");
-// or you can normalize digits keeping rest chars
-assert_eq!(normalize_decimals(messy_string), "Phone number: （0）98-765 and pin: 3-1-4-1");
-println!("Extracted digits: {}", digits); // "0987653141"
+```toml[package]
+[build-dependencies]
+uniprops-gen = "0.3.0" # Use the latest version
 ```
 
-## How It Works
+## 🛠 Usage
 
-This crate contains two main parts:
+### 1. Configure `build.rs`
 
-1.  A procedural macro that reads the official `UnicodeData.txt` file at **compile time**.
-2.  An extension trait that uses the code generated by this macro.
+Create a `build.rs` file in your project root. Use the builder to generate your tables into `OUT_DIR`.
 
-When you compile your project, the macro scans the Unicode data file for every character that is a decimal digit (category `Nd`). It then generates a massive, but hyper-efficient, `match` statement that maps each of these characters to its `u8` value (0-9).
+```rust
+// build.rs
+use uniprops-gen::UnipropsBuilder;
 
-This generated code is then compiled directly into your binary. The result? At runtime, calling `.to_decimal_utf8()` is as fast as it gets, with no searching, parsing, or hashmaps involved.
+fn main() {
+    // Generate everything (Categories + Digits)
+    UnipropsBuilder::new()
+        .out_file("unicode_data.rs")
+        .with_categories(true)
+        .with_digits(true)
+        .build();
 
-## API
+    // OR: Generate a specialized table (e.g., only Decimal Numbers)
+    UnipropsBuilder::new()
+        .out_file("filtered_digits.rs")
+        .filter(|record| record.general_category == "Nd")
+        .build();
+}
+```
 
-The crate exposes a single trait:
+### 2. Include in `lib.rs`
 
-`pub trait DecimalExtended`
+Import the generated code using the `include!` macro.
 
-*   `fn to_decimal_utf8(&self) -> Option<u8>`: Converts any decimal Unicode digit in the `Nd` category to a `u8`. Returns `None` if the character is not a decimal digit.
-*   `fn is_decimal_utf8(&self) -> bool`: A convenience method that returns `true` if the character is a decimal digit.
+```rust
+// src/lib.rs
 
-## License
+pub mod generated {
+    // The file name must match what you set in build.rs
+    include!(concat!(env!("OUT_DIR"), "/unicode_data.rs"));
+}
 
-This project is licensed under either of
-*   Apache License, Version 2.0, ([LICENSE-APACHE](http://www.apache.org/licenses/LICENSE-2.0))
-*   MIT license ([LICENSE-MIT](http://opensource.org/licenses/MIT))
+fn main() {
+    use generated::uniprops::{Category, get_digit_value};
+
+    // 1. Fast Category Lookup
+    assert_eq!(Category::from_char('A'), Some(Category::Lu)); // Letter, Uppercase
+    assert_eq!(Category::from_char('🦀'), Some(Category::So)); // Symbol, Other
+
+    // 2. Fast Digit Value Lookup
+    assert_eq!(get_digit_value('9'), Some(9)); // ASCII
+    assert_eq!(get_digit_value('٣'), Some(3)); // Arabic-Indic
+    assert_eq!(get_digit_value('X'), None);
+}
+```
+
+## 📄 License
+
+This project is dual-licensed under either of:
+
+*   [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+*   [MIT license](http://opensource.org/licenses/MIT)
 
 at your option.
 
-## Contributing
-
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/your-username/extended-decimal/issues).

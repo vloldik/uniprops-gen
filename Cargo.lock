@@ -467,6 +467,7 @@ name = "uniprops-gen"
 version = "0.3.0"
 dependencies = [
  "csv",
+ "proc-macro2",
  "quote",
  "serde",
 ]

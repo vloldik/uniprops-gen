@@ -1,5 +1,5 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use tests::generated::{Category, get_digit_value};
+use tests::generated_uniprops::uniprops::{Category, get_digit_value};
 
 const TEST_TEXT: &str =  "\
         ｗ０-０２３４.３４ｆｗｅ０９８３２４８９２３９ｒ８０)９９ｆｄｓｆ
@@ -38,6 +38,14 @@ fn benchmark_categories(c: &mut Criterion) {
         b.iter_batched(
             || TEST_TEXT.chars().cycle(),
             |mut iter| black_box(get_digit_value(iter.next().unwrap())),
+            BatchSize::SmallInput,
+        );
+    });
+
+    c.bench_function("Is numeric", |b| {
+        b.iter_batched(
+            || TEST_TEXT.chars().cycle(),
+            |mut iter| black_box(iter.next().unwrap().is_numeric()),
             BatchSize::SmallInput,
         );
     });

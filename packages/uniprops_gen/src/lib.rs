@@ -1,3 +1,4 @@
+use proc_macro2::TokenStream;
 // build.rs
 use quote::{format_ident, quote};
 use serde::{Deserialize, Deserializer};
@@ -58,6 +59,10 @@ fn get_tag_by_name(name: &str) -> PositionTag {
     }
 }
 
+/// A builder for generating a Rust source file containing Unicode property tables and lookups.
+///
+/// This builder processes the `UnicodeData.txt` asset and generates optimized lookup
+/// tables for character categories and decimal digit values.
 pub struct UnipropsBuilder<'a> {
     out_name: String,
     gen_categories: bool,
@@ -66,6 +71,10 @@ pub struct UnipropsBuilder<'a> {
 }
 
 impl<'a> UnipropsBuilder<'a> {
+    /// Creates a new `UnipropsBuilder` with default settings.
+    ///
+    /// By default, it generates `generated_uniprops.rs` with both categories
+    /// and digit values enabled.
     pub fn new() -> Self {
         Self {
             out_name: "generated_uniprops.rs".to_string(),
@@ -75,21 +84,29 @@ impl<'a> UnipropsBuilder<'a> {
         }
     }
 
+    /// Sets the name of the generated output file.
+    ///
+    /// The file will be created in the directory specified by the `OUT_DIR` environment variable.
     pub fn out_file(mut self, name: &str) -> Self {
         self.out_name = name.to_string();
         self
     }
 
+    /// Toggles the generation of the `Category` enum and character-to-category mapping.
     pub fn with_categories(mut self, enable: bool) -> Self {
         self.gen_categories = enable;
         self
     }
 
+    /// Toggles the generation of the `get_digit_value` function and its associated tables.
     pub fn with_digits(mut self, enable: bool) -> Self {
         self.gen_digits = enable;
         self
     }
 
+    /// Sets a filter to include only specific Unicode records in the generation process.
+    ///
+    /// Records that return `false` from the filter will be ignored.
     pub fn filter<F>(mut self, filter: F) -> Self
     where
         F: Fn(&UnicodeRecord) -> bool + 'a,
@@ -98,25 +115,40 @@ impl<'a> UnipropsBuilder<'a> {
         self
     }
 
+    /// Executes the code generation process.
+    ///
+    /// This method:
+    /// 1. Parses the Unicode data.
+    /// 2. Generates optimized lookup tables (multi-level arrays for categories and ranges for digits).
+    /// 3. Writes the resulting Rust code to the output file.
+    /// 4. Attempts to format the generated file using `rustfmt`.
+    ///
+    /// # Panics
+    /// Panics if `OUT_DIR` is not set, or if there are errors reading the asset or writing the output file.
     pub fn build(self) {
         let raw_data = self.parse_data();
 
-        let mut tokens = quote! {
-            #![allow(clippy::all)]
-            #![allow(dead_code)]
-            #![allow(non_upper_case_globals)]
-        }
-        .to_string();
+        let categories = if self.gen_categories {
+            self.generate_categories(&raw_data)
+        } else {
+            quote! {}
+        };
 
-        if self.gen_categories {
-            let cat_tokens = self.generate_categories(&raw_data);
-            tokens += cat_tokens.as_str();
-        }
+        let digits = if self.gen_digits {
+            self.generate_digits(&raw_data)
+        } else {
+            quote! {}
+        };
 
-        if self.gen_digits {
-            let dig_tokens = self.generate_digits(&raw_data);
-            tokens += dig_tokens.as_str();
-        }
+        let tokens = quote! {
+            #[allow(clippy::all)]
+            #[allow(dead_code)]
+            #[allow(non_upper_case_globals)]
+            pub mod uniprops {
+                #categories
+                #digits
+            }
+        };
 
         let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set by cargo");
         let dest_path = Path::new(&out_dir).join(&self.out_name);
@@ -146,7 +178,7 @@ impl<'a> UnipropsBuilder<'a> {
         raw_data
     }
 
-    fn generate_categories(&self, raw_data: &[UnicodeRecord]) -> String {
+    fn generate_categories(&self, raw_data: &[UnicodeRecord]) -> TokenStream {
         const SHIFT: u32 = 8;
         const SIZE: u32 = 1 << SHIFT;
         const MASK: u32 = SIZE - 1;
@@ -296,10 +328,9 @@ impl<'a> UnipropsBuilder<'a> {
                 }
             }
         }
-        .to_string()
     }
 
-    fn generate_digits(&self, raw_data: &[UnicodeRecord]) -> String {
+    fn generate_digits(&self, raw_data: &[UnicodeRecord]) -> TokenStream {
         struct DigitRange {
             start: u32,
             end: u32,
@@ -365,7 +396,6 @@ impl<'a> UnipropsBuilder<'a> {
                 ::std::option::Option::None
             }
         }
-        .to_string()
     }
 }
 
