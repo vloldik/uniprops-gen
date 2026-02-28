@@ -1,142 +1,123 @@
+use quote::{format_ident, quote};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{collections::HashSet, io::BufReader};
 
-use proc_macro::TokenStream;
-use quote::{format_ident, quote};
-use serde::Deserialize;
+fn deserialize_hex_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    u32::from_str_radix(&s, 16).map_err(serde::de::Error::custom)
+}
 
-/// Category for digits in UnicodeData.txt
-const NUMERIC_CATEGORY: &str = "Nd";
-
-/// Represents a single entry (line) in the UnicodeData.txt file.
-///
-/// The fields correspond to the specification described in Unicode Standard Annex #44.
-/// https://www.unicode.org/reports/tr44/#UnicodeData.txt
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[allow(unused)]
-struct UnicodeRecord {
-    /// Field 0: The character's code point in hexadecimal format.
-    pub code_point: String,
-
-    /// Field 1: The official character name. For ranges, this is the name of the starting character.
+pub struct UnicodeRecord {
+    #[serde(deserialize_with = "deserialize_hex_u32")]
+    pub code_point: u32,
     pub name: String,
-
-    /// Field 2: The character's general category (e.g., "Lu", "Nd", "So").
     pub general_category: String,
-
-    /// Field 3: The canonical combining class (a number from 0 to 254).
     pub canonical_combining_class: u8,
-
-    /// Field 4: The bidirectional category (e.g., "L", "R", "ON").
     pub bidi_category: String,
-
-    /// Field 5: The character's decomposition. May include a compatibility tag (e.g., "<font>").
     pub decomposition: Option<String>,
-
-    /// Field 6: The numeric value, if the character is a decimal digit.
     pub decimal_digit_value: Option<u32>,
-
-    /// Field 7: The numeric value, if the character is a digit (but not necessarily decimal).
     pub digit_value: Option<u32>,
-
-    /// Field 8: The character's numeric value in a more general sense (including fractions).
-    pub numeric_value: Option<String>, // Can be a fraction, so it's a String
-
-    /// Field 9: "Y" (yes) or "N" (no) — whether the character should be mirrored in bidirectional text.
+    pub numeric_value: Option<String>,
     pub bidi_mirrored: String,
-
-    /// Field 10: The legacy name from Unicode 1.0.
     pub unicode_1_name: Option<String>,
-
-    /// Field 11: The legacy ISO 10646 comment.
     pub iso_comment: Option<String>,
-
-    /// Field 12: Simple uppercase mapping (a single character).
     pub simple_uppercase_mapping: Option<String>,
-
-    /// Field 13: Simple lowercase mapping (a single character).
     pub simple_lowercase_mapping: Option<String>,
-
-    /// Field 14: Simple titlecase mapping (a single character).
     pub simple_titlecase_mapping: Option<String>,
 }
 
-#[derive(Debug)]
-struct NormalizationReplacement {
-    normalized_unicode_char: char,
-    ascii_char: u32,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PositionTag {
+    First,
+    Last,
+    None,
 }
 
-fn extract_unicode_char(hex_code_digits: &str) -> char {
-    u32::from_str_radix(hex_code_digits, 16)
-        .map(char::from_u32)
-        .unwrap()
-        .expect("Hex MUST be valid unicode")
+fn get_tag_by_name(name: &str) -> PositionTag {
+    let Some(delim) = name.split(',').nth(1) else {
+        return PositionTag::None;
+    };
+    let tag = delim.trim_matches(|c| c == ' ' || c == '>');
+    if tag == "First" {
+        PositionTag::First
+    } else {
+        PositionTag::Last
+    }
 }
 
-fn parse_mappings<T>(callback: impl Fn(UnicodeRecord) -> Option<T>) -> Vec<T> {
-    let file = include_str!("../assets/UnicodeData.txt");
-    let reader = BufReader::new(file.as_bytes());
+const UNICODE_DATA: &str = include_str!("../assets/UnicodeData.txt");
+
+fn parse_filtered_mappings(
+    filter: impl Fn(&UnicodeRecord) -> bool,
+) -> Result<Vec<UnicodeRecord>, String> {
+    let reader = BufReader::new(UNICODE_DATA.as_bytes());
     let mut parser = csv::ReaderBuilder::new()
         .has_headers(false)
         .delimiter(b';')
         .from_reader(reader);
 
-    parser
-        .deserialize::<UnicodeRecord>()
-        .flatten()
-        .flat_map(callback)
-        .collect()
-}
-
-fn parse_digit_mappings() -> Vec<NormalizationReplacement> {
-    parse_mappings(|res| {
-        if res.general_category != NUMERIC_CATEGORY {
-            return None;
-        }
-        Some(NormalizationReplacement {
-            normalized_unicode_char: extract_unicode_char(&res.code_point),
-            ascii_char: res
-                .decimal_digit_value
-                .expect("all \\Nd should have decimal value"),
-        })
-    })
-}
-
-/// This macro creates 'match' structure for each decimal digit with category
-/// `\Nd` in unicode `UnicodeData.txt`.
-///
-/// Since data for parsing is downloaded, saved in git and tested it should always compile.
-#[proc_macro]
-pub fn digit_parse_mappings(item: TokenStream) -> TokenStream {
-    let mappings = parse_digit_mappings()
-        .iter()
-        .map(|r| {
-            let match_char = r.normalized_unicode_char;
-            let ascii_digit = r.ascii_char;
-            quote! {
-                #match_char => ::std::option::Option::Some(#ascii_digit as u8)
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let item = format_ident!("{}", item.to_string());
-    quote! {
-        match #item {
-            #(#mappings,)*
-            _ => ::std::option::Option::None
+    let mut raw_data = Vec::new();
+    for result in parser.deserialize::<UnicodeRecord>() {
+        let record = result.map_err(|e| format!("CSV Parse Error: {}", e))?;
+        if filter(&record) {
+            raw_data.push(record);
         }
     }
-    .into()
+
+    raw_data.sort_by_key(|r| r.code_point);
+    Ok(raw_data)
 }
 
-#[proc_macro]
-pub fn generate_categories(_item: TokenStream) -> TokenStream {
-    let records =
-        parse_mappings(|res| Some((extract_unicode_char(&res.code_point), res.general_category)));
+pub fn generate_categories(filter: impl Fn(&UnicodeRecord) -> bool) -> Result<String, String> {
+    const SHIFT: u32 = 8;
+    const SIZE: u32 = 1 << SHIFT;
+    const MASK: u32 = SIZE - 1;
 
-    let mut unique_categories: Vec<String> = records
+    let raw_data = parse_filtered_mappings(filter)?;
+
+    struct MappingGroup {
+        general_category: String,
+        start: u32,
+        end: u32,
+    }
+
+    let mut mapping_groups = Vec::new();
+
+    if !raw_data.is_empty() {
+        let record = &raw_data[0];
+        let mut current_group = MappingGroup {
+            general_category: record.general_category.clone(),
+            start: record.code_point,
+            end: record.code_point,
+        };
+
+        for record in raw_data.iter().skip(1) {
+            let was_groupped = get_tag_by_name(&record.name) == PositionTag::Last;
+            if (record.code_point == current_group.end + 1
+                && record.general_category == current_group.general_category)
+                || was_groupped
+            {
+                current_group.end = record.code_point;
+            } else {
+                mapping_groups.push(current_group);
+                current_group = MappingGroup {
+                    general_category: record.general_category.clone(),
+                    start: record.code_point,
+                    end: record.code_point,
+                };
+            }
+        }
+        mapping_groups.push(current_group);
+    }
+
+    let mut unique_categories: Vec<String> = mapping_groups
         .iter()
-        .map(|(_, cat)| cat.clone())
+        .map(|g| g.general_category.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -148,28 +129,162 @@ pub fn generate_categories(_item: TokenStream) -> TokenStream {
         quote! { #ident }
     });
 
-    let match_arms = records.iter().map(|(c, cat)| {
-        let ident = format_ident!("{}", cat);
-        quote! {
-            #c => ::std::option::Option::Some(Category::#ident)
+    let max_codepoint: u32 = 0x10FFFF;
+    let mut unique_blocks: Vec<Vec<Option<String>>> = Vec::new();
+    let mut indices: Vec<usize> = Vec::new();
+    let mut group_iter = mapping_groups.iter();
+    let mut current_group = group_iter.next();
+
+    for chunk_start in (0..=max_codepoint).step_by(SIZE as usize) {
+        let mut block = Vec::with_capacity(SIZE as usize);
+
+        for i in 0..SIZE {
+            let cp = chunk_start + i;
+            while let Some(g) = current_group {
+                if cp > g.end {
+                    current_group = group_iter.next();
+                } else {
+                    break;
+                }
+            }
+
+            let category = if let Some(g) = current_group {
+                if cp >= g.start && cp <= g.end {
+                    Some(g.general_category.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            block.push(category);
+        }
+
+        if let Some(idx) = unique_blocks.iter().position(|b| b == &block) {
+            indices.push(idx);
+        } else {
+            indices.push(unique_blocks.len());
+            unique_blocks.push(block);
+        }
+    }
+
+    let index_type = if unique_blocks.len() <= 256 {
+        quote! { u8 }
+    } else {
+        quote! { u16 }
+    };
+    let indices_tokens = indices.iter().map(|&idx| {
+        if unique_blocks.len() <= 256 {
+            let val = idx as u8;
+            quote! { #val }
+        } else {
+            let val = idx as u16;
+            quote! { #val }
         }
     });
 
-    let expanded = quote! {
+    let indices_len = indices.len();
+    let blocks_tokens = unique_blocks.iter().flatten().map(|opt_cat| match opt_cat {
+        Some(cat) => {
+            let ident = format_ident!("{}", cat);
+            quote! { Some(Category::#ident) }
+        }
+        None => quote! { None },
+    });
+    let blocks_len = unique_blocks.len() * (SIZE as usize);
+
+    Ok(quote! {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum Category {
             #(#enum_variants),*
         }
 
+        static CATEGORY_INDICES:[#index_type; #indices_len] = [
+            #(#indices_tokens),*
+        ];
+
+        static CATEGORY_BLOCKS: [Option<Category>; #blocks_len] =[
+            #(#blocks_tokens),*
+        ];
+
         impl Category {
+            #[inline(always)]
             pub fn from_char(c: char) -> ::std::option::Option<Self> {
-                match c {
-                    #(#match_arms,)*
-                    _ => ::std::option::Option::None,
+                let cp = c as u32;
+                if cp > #max_codepoint { return None; }
+
+                let index_idx = (cp >> #SHIFT) as usize;
+
+                // SAFETY: Arrays are generated to cover up to 0x10FFFF
+                unsafe {
+                    let block_idx = *CATEGORY_INDICES.get_unchecked(index_idx) as usize;
+                    let offset = (cp & #MASK) as usize;
+                    let final_pos = (block_idx << #SHIFT) + offset;
+                    *CATEGORY_BLOCKS.get_unchecked(final_pos)
                 }
             }
         }
-    };
+    }
+    .to_string())
+}
 
-    expanded.into()
+pub fn generate_digits(filter: impl Fn(&UnicodeRecord) -> bool) -> Result<String, String> {
+    let raw_data = parse_filtered_mappings(filter)?;
+
+    struct DigitRange {
+        start: u32,
+        end: u32,
+        base_val: u8,
+    }
+
+    let mut ranges: Vec<DigitRange> = Vec::new();
+
+    for r in raw_data {
+        let Some(dig_val) = r.decimal_digit_value else {
+            continue;
+        };
+        let dig_val = dig_val as u8;
+
+        if let Some(last) = ranges.last_mut() {
+            let is_contiguous_cp = r.code_point == last.end + 1;
+            let expected_val = last.base_val as u32 + (r.code_point - last.start);
+
+            if is_contiguous_cp && dig_val as u32 == expected_val {
+                last.end = r.code_point;
+                continue;
+            }
+        }
+        ranges.push(DigitRange {
+            start: r.code_point,
+            end: r.code_point,
+            base_val: dig_val,
+        });
+    }
+
+    let starts: Vec<u32> = ranges.iter().map(|r| r.start).collect();
+    let ends: Vec<u32> = ranges.iter().map(|r| r.end).collect();
+    let bases: Vec<u8> = ranges.iter().map(|r| r.base_val).collect();
+    let len = ranges.len();
+
+    Ok(quote! {
+        static DIGIT_STARTS: [u32; #len] = [ #(#starts),* ];
+        static DIGIT_ENDS:   [u32; #len] = [ #(#ends),*   ];
+        static DIGIT_BASES:  [u8;  #len] = [ #(#bases),*  ];
+
+        #[inline(always)]
+        pub fn get_digit_value(c: char) -> ::std::option::Option<u8> {
+            let cp = c as u32;
+            let idx = DIGIT_STARTS.partition_point(|&start| start <= cp);
+
+            if idx > 0 {
+                let i = idx - 1;
+                if cp <= DIGIT_ENDS[i] {
+                    let offset = cp - DIGIT_STARTS[i];
+                    return ::std::option::Option::Some(DIGIT_BASES[i] + offset as u8);
+                }
+            }
+            ::std::option::Option::None
+        }
+    }
+    .to_string())
 }

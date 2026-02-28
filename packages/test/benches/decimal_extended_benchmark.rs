@@ -1,9 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use tests::generated::{self, Category, get_digit_value};
 
-use uniprops::DecimalExtended;
-
-fn benchmark_decimal_extended_string(c: &mut Criterion) {
-    let text = "\
+const TEST_TEXT: &str =  "\
         ｗ０-０２３４.３４ｆｗｅ０９８３２４８９２３９ｒ８０)９９ｆｄｓｆ
         𝐰𝟎-𝟎𝟐𝟑𝟒.𝟑𝟒𝐟𝐰𝐞𝟎𝟗𝟖𝟑𝟐𝟒𝟖𝟗𝟐𝟑𝟗𝐫𝟖𝟎)𝟗𝟗𝐟𝐝𝐬𝐟
         𝖜𝟎-𝟎𝟐𝟑𝟒.𝟑𝟒𝖋𝖜𝖊𝟎𝟗𝟖𝟑𝟐𝟒𝟖𝟗𝟐𝟑𝟗𝖗𝟖𝟎)𝟗𝟗𝖋𝖉𝖘𝖋
@@ -27,43 +25,23 @@ fn benchmark_decimal_extended_string(c: &mut Criterion) {
         ̸w0-0234.34̸f̸w̸e09832489239̸r80)99̸f̸d̸s̸f\
     ";
 
-    c.bench_function("to_decimal_utf8_string", |b| {
-        b.iter(|| {
-            let _ = black_box(text)
-                .chars()
-                .filter_map(|c| c.to_decimal_utf8())
-                .collect::<Vec<u8>>();
-        })
+fn benchmark_categories(c: &mut Criterion) {
+    c.bench_function("Categories", |b| {
+        b.iter_batched(
+            || TEST_TEXT.chars().cycle(),
+            |mut iter| black_box(Category::from_char(iter.next().unwrap())),
+            BatchSize::SmallInput,
+        );
+    });
+
+    c.bench_function("Digits", |b| {
+        b.iter_batched(
+            || TEST_TEXT.chars().cycle(),
+            |mut iter| black_box(get_digit_value(iter.next().unwrap())),
+            BatchSize::SmallInput,
+        );
     });
 }
 
-fn benchmark_decimal_extended_char(c: &mut Criterion) {
-    let mut group = c.benchmark_group("to_decimal_utf8_char");
-
-    group.bench_function("ASCII digit with simple decimal", |b| {
-        b.iter(|| black_box('7').to_digit(10))
-    });
-
-    group.bench_function("Full-width digit", |b| {
-        b.iter(|| black_box('７').to_decimal_utf8())
-    });
-
-    group.bench_function("Devanagari digit", |b| {
-        b.iter(|| black_box('९').to_decimal_utf8())
-    });
-
-    group.bench_function("Arabic digit", |b| {
-        b.iter(|| black_box('٣').to_decimal_utf8())
-    });
-
-    group.bench_function("Non-digit", |b| b.iter(|| black_box('a').to_decimal_utf8()));
-
-    group.finish();
-}
-
-criterion_group!(
-    benches,
-    benchmark_decimal_extended_string,
-    benchmark_decimal_extended_char
-);
+criterion_group!(benches, benchmark_categories);
 criterion_main!(benches);

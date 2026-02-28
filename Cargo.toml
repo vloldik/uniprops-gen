@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["packages/uniprops", "packages/uniprops_gen"]
+members = ["packages/uniprops_gen", "packages/test"]
 
 [workspace.dependencies]
 
