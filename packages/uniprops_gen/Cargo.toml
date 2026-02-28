@@ -7,6 +7,7 @@ description = "A code generation library for creating optimized Unicode property
 repository = "https://github.com/vloldik/uniprops"
 categories = ["development-tools::build-utils", "internationalization"]
 keywords = ["unicode", "codegen", "build-rs"]
+readme = { workspace = true }
 
 [dependencies]
 csv = "1.3"
