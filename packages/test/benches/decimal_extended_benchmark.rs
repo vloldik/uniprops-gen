@@ -1,5 +1,8 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use tests::generated_uniprops::uniprops::{Category, get_digit_value};
+use tests::{
+    generated_uniprops::uniprops::{Category, get_digit_value},
+    without_0x38,
+};
 
 const TEST_TEXT: &str =  "\
         ｗ０-０２３４.３４ｆｗｅ０９８３２４８９２３９ｒ８０)９９ｆｄｓｆ
@@ -25,6 +28,8 @@ const TEST_TEXT: &str =  "\
         ̸w0-0234.34̸f̸w̸e09832489239̸r80)99̸f̸d̸s̸f\
     ";
 
+const DIGITS: &str = "1234567890";
+
 fn benchmark_categories(c: &mut Criterion) {
     c.bench_function("Categories", |b| {
         b.iter_batched(
@@ -46,6 +51,26 @@ fn benchmark_categories(c: &mut Criterion) {
         b.iter_batched(
             || TEST_TEXT.chars().cycle(),
             |mut iter| black_box(iter.next().unwrap().is_numeric()),
+            BatchSize::SmallInput,
+        );
+    });
+
+    c.bench_function("Get numeric (no fastpath)", |b| {
+        b.iter_batched(
+            || DIGITS.chars().cycle(),
+            |mut iter| {
+                black_box(without_0x38::uniprops::get_digit_value(
+                    iter.next().unwrap(),
+                ))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    c.bench_function("Get numeric (fastpath)", |b| {
+        b.iter_batched(
+            || DIGITS.chars().cycle(),
+            |mut iter| black_box(get_digit_value(iter.next().unwrap())),
             BatchSize::SmallInput,
         );
     });

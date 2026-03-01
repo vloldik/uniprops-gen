@@ -11,4 +11,9 @@ fn main() {
         .with_categories(false)
         .out_file("no_categories.rs")
         .build();
+
+    UnipropsBuilder::new()
+        .filter(|r| r.code_point != 0x38)
+        .out_file("without_0x38.rs")
+        .build();
 }

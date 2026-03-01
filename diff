@@ -1,0 +1,142 @@
+diff --git a/packages/test/benches/decimal_extended_benchmark.rs b/packages/test/benches/decimal_extended_benchmark.rs
+index 49c68ce..470498c 100644
+--- a/packages/test/benches/decimal_extended_benchmark.rs
++++ b/packages/test/benches/decimal_extended_benchmark.rs
+@@ -1,5 +1,8 @@
+ use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+-use tests::generated_uniprops::uniprops::{Category, get_digit_value};
++use tests::{
++    generated_uniprops::uniprops::{Category, get_digit_value},
++    without_0x38,
++};
+ 
+ const TEST_TEXT: &str =  "\
+         ｗ０-０２３４.３４ｆｗｅ０９８３２４８９２３９ｒ８０)９９ｆｄｓｆ
+@@ -25,6 +28,8 @@ const TEST_TEXT: &str =  "\
+         ̸w0-0234.34̸f̸w̸e09832489239̸r80)99̸f̸d̸s̸f\
+     ";
+ 
++const DIGITS: &str = "1234567890";
++
+ fn benchmark_categories(c: &mut Criterion) {
+     c.bench_function("Categories", |b| {
+         b.iter_batched(
+@@ -49,6 +54,26 @@ fn benchmark_categories(c: &mut Criterion) {
+             BatchSize::SmallInput,
+         );
+     });
++
++    c.bench_function("Get numeric (no fastpath)", |b| {
++        b.iter_batched(
++            || DIGITS.chars().cycle(),
++            |mut iter| {
++                black_box(without_0x38::uniprops::get_digit_value(
++                    iter.next().unwrap(),
++                ))
++            },
++            BatchSize::SmallInput,
++        );
++    });
++
++    c.bench_function("Get numeric (fastpath)", |b| {
++        b.iter_batched(
++            || DIGITS.chars().cycle(),
++            |mut iter| black_box(get_digit_value(iter.next().unwrap())),
++            BatchSize::SmallInput,
++        );
++    });
+ }
+ 
+ criterion_group!(benches, benchmark_categories);
+diff --git a/packages/test/build.rs b/packages/test/build.rs
+index ead0fb2..9099c23 100644
+--- a/packages/test/build.rs
++++ b/packages/test/build.rs
+@@ -11,4 +11,9 @@ fn main() {
+         .with_categories(false)
+         .out_file("no_categories.rs")
+         .build();
++
++    UnipropsBuilder::new()
++        .filter(|r| r.code_point != 0x38)
++        .out_file("without_0x38.rs")
++        .build();
+ }
+diff --git a/packages/test/src/lib.rs b/packages/test/src/lib.rs
+index de0716f..9951a87 100644
+--- a/packages/test/src/lib.rs
++++ b/packages/test/src/lib.rs
+@@ -9,6 +9,10 @@ pub mod no_categories {
+     include!(concat!(env!("OUT_DIR"), "/no_categories.rs"));
+ }
+ 
++pub mod without_0x38 {
++    include!(concat!(env!("OUT_DIR"), "/without_0x38.rs"));
++}
++
+ #[cfg(test)]
+ mod tests {
+     use std::char;
+@@ -204,4 +208,17 @@ mod tests {
+ 
+         assert_eq!(get_digit_value('\u{1D800}'), None);
+     }
++
++    #[test]
++    fn test_if_excluded_digit_not_exists() {
++        use without_0x38::uniprops::{Category, get_digit_value};
++
++        assert_eq!(get_digit_value('\u{38}'), None);
++        assert_eq!(get_digit_value('\u{37}'), Some(7));
++        assert_eq!(get_digit_value('\u{39}'), Some(9));
++
++        assert_eq!(Category::from_char('\u{38}'), None);
++        assert_eq!(Category::from_char('\u{37}'), Some(Category::Nd));
++        assert_eq!(Category::from_char('\u{39}'), Some(Category::Nd));
++    }
+ }
+diff --git a/packages/uniprops_gen/src/lib.rs b/packages/uniprops_gen/src/lib.rs
+index 6c4557e..1caadb8 100644
+--- a/packages/uniprops_gen/src/lib.rs
++++ b/packages/uniprops_gen/src/lib.rs
+@@ -366,6 +366,25 @@ impl<'a> UnipropsBuilder<'a> {
+         let bases: Vec<u8> = ranges.iter().map(|r| r.base_val).collect();
+         let len = ranges.len();
+ 
++        // Generate fast path only if there are all of the digits presented in raw_data
++        let fast_path = if raw_data
++            .iter()
++            .filter(|r| r.code_point >= 0x30 && r.code_point <= 0x39)
++            .count()
++            == 10
++        {
++            quote! {
++            if cp <= 0x7F {
++                return if cp >= 0x30 && cp <= 0x39 { // '0'..='9'
++                    ::std::option::Option::Some((cp - 0x30) as u8)
++                } else {
++                    ::std::option::Option::None
++                };
++            }}
++        } else {
++            quote! {}
++        };
++
+         quote! {
+             static DIGIT_STARTS: [u32; #len] = [ #(#starts),* ];
+             static DIGIT_ENDS:   [u32; #len] = [ #(#ends),*   ];
+@@ -376,13 +395,7 @@ impl<'a> UnipropsBuilder<'a> {
+                 let cp = c as u32;
+ 
+                 // Fast path for ascii
+-                if cp <= 0x7F {
+-                    return if cp >= 0x30 && cp <= 0x39 { // '0'..='9'
+-                        ::std::option::Option::Some((cp - 0x30) as u8)
+-                    } else {
+-                        ::std::option::Option::None
+-                    };
+-                }
++                #fast_path
+ 
+                 let idx = DIGIT_STARTS.partition_point(|&start| start <= cp);
+ 

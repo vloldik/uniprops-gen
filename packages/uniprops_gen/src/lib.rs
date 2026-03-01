@@ -366,6 +366,23 @@ impl<'a> UnipropsBuilder<'a> {
         let bases: Vec<u8> = ranges.iter().map(|r| r.base_val).collect();
         let len = ranges.len();
 
+        let has_all_ascii_digits =
+            (0x30..=0x39).all(|cp| raw_data.binary_search_by_key(&cp, |r| r.code_point).is_ok());
+
+        // Generate fast path only if there are all of the digits presented in raw_data
+        let fast_path = if has_all_ascii_digits {
+            quote! {
+            if cp <= 0x7F {
+                return if cp >= 0x30 && cp <= 0x39 { // '0'..='9'
+                    ::std::option::Option::Some((cp - 0x30) as u8)
+                } else {
+                    ::std::option::Option::None
+                };
+            }}
+        } else {
+            quote! {}
+        };
+
         quote! {
             static DIGIT_STARTS: [u32; #len] = [ #(#starts),* ];
             static DIGIT_ENDS:   [u32; #len] = [ #(#ends),*   ];
@@ -376,13 +393,7 @@ impl<'a> UnipropsBuilder<'a> {
                 let cp = c as u32;
 
                 // Fast path for ascii
-                if cp <= 0x7F {
-                    return if cp >= 0x30 && cp <= 0x39 { // '0'..='9'
-                        ::std::option::Option::Some((cp - 0x30) as u8)
-                    } else {
-                        ::std::option::Option::None
-                    };
-                }
+                #fast_path
 
                 let idx = DIGIT_STARTS.partition_point(|&start| start <= cp);
 

@@ -9,6 +9,10 @@ pub mod no_categories {
     include!(concat!(env!("OUT_DIR"), "/no_categories.rs"));
 }
 
+pub mod without_0x38 {
+    include!(concat!(env!("OUT_DIR"), "/without_0x38.rs"));
+}
+
 #[cfg(test)]
 mod tests {
     use std::char;
@@ -203,5 +207,18 @@ mod tests {
         assert_eq!(get_digit_value('\u{1D7E2}'), Some(0));
 
         assert_eq!(get_digit_value('\u{1D800}'), None);
+    }
+
+    #[test]
+    fn test_if_excluded_digit_not_exists() {
+        use without_0x38::uniprops::{Category, get_digit_value};
+
+        assert_eq!(get_digit_value('\u{38}'), None);
+        assert_eq!(get_digit_value('\u{37}'), Some(7));
+        assert_eq!(get_digit_value('\u{39}'), Some(9));
+
+        assert_eq!(Category::from_char('\u{38}'), None);
+        assert_eq!(Category::from_char('\u{37}'), Some(Category::Nd));
+        assert_eq!(Category::from_char('\u{39}'), Some(Category::Nd));
     }
 }
