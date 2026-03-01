@@ -8,7 +8,6 @@ use std::{
     fs::File,
     io::{BufReader, Write},
     path::Path,
-    process::Command,
 };
 
 fn deserialize_hex_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -144,6 +143,7 @@ impl<'a> UnipropsBuilder<'a> {
             #[allow(clippy::all)]
             #[allow(dead_code)]
             #[allow(non_upper_case_globals)]
+            #[rustfmt::skip]
             pub mod uniprops {
                 #categories
                 #digits
@@ -156,8 +156,6 @@ impl<'a> UnipropsBuilder<'a> {
         let mut file = File::create(&dest_path).expect("Failed to create output file");
         file.write_all(tokens.to_string().as_bytes())
             .expect("Failed to write to output file");
-
-        let _ = Command::new("rustfmt").arg(&dest_path).status();
     }
 
     fn parse_data(&self) -> Vec<UnicodeRecord> {
