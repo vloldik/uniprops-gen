@@ -13,6 +13,10 @@ pub mod without_0x38 {
     include!(concat!(env!("OUT_DIR"), "/without_0x38.rs"));
 }
 
+pub mod custom {
+    include!(concat!(env!("OUT_DIR"), "/custom.rs"));
+}
+
 #[cfg(test)]
 mod tests {
     use std::char;
@@ -220,5 +224,18 @@ mod tests {
         assert_eq!(Category::from_char('\u{38}'), None);
         assert_eq!(Category::from_char('\u{37}'), Some(Category::Nd));
         assert_eq!(Category::from_char('\u{39}'), Some(Category::Nd));
+    }
+
+    #[test]
+    fn test_custom_generated() {
+        use custom::uniprops::{TEST_ARRAY_OF_CATEGORIES, TEST_ARRAY_OF_DEC_VALUES};
+
+        assert_eq!(TEST_ARRAY_OF_CATEGORIES.len(), 2);
+        assert_eq!(TEST_ARRAY_OF_CATEGORIES[0], TEST_ARRAY_OF_CATEGORIES[1]);
+        assert_eq!(TEST_ARRAY_OF_CATEGORIES[0], "Nd");
+
+        assert_eq!(TEST_ARRAY_OF_DEC_VALUES.len(), 2);
+        assert_eq!(TEST_ARRAY_OF_DEC_VALUES[0], 0);
+        assert_eq!(TEST_ARRAY_OF_DEC_VALUES[1], 8);
     }
 }

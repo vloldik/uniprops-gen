@@ -58,6 +58,8 @@ fn get_tag_by_name(name: &str) -> PositionTag {
     }
 }
 
+type CustomGenerator<'a> = Box<dyn Fn(&[UnicodeRecord]) -> String + 'a>;
+
 /// A builder for generating a Rust source file containing Unicode property tables and lookups.
 ///
 /// This builder processes the `UnicodeData.txt` asset and generates optimized lookup
@@ -67,6 +69,7 @@ pub struct UnipropsBuilder<'a> {
     gen_categories: bool,
     gen_digits: bool,
     filter: Box<dyn Fn(&UnicodeRecord) -> bool + 'a>,
+    custom_generators: Vec<CustomGenerator<'a>>,
 }
 
 impl<'a> UnipropsBuilder<'a> {
@@ -80,6 +83,7 @@ impl<'a> UnipropsBuilder<'a> {
             gen_categories: true,
             gen_digits: true,
             filter: Box::new(|_| true),
+            custom_generators: Default::default(),
         }
     }
 
@@ -100,6 +104,14 @@ impl<'a> UnipropsBuilder<'a> {
     /// Toggles the generation of the `get_digit_value` function and its associated tables.
     pub fn with_digits(mut self, enable: bool) -> Self {
         self.gen_digits = enable;
+        self
+    }
+
+    pub fn with_custom<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&[UnicodeRecord]) -> String + 'a,
+    {
+        self.custom_generators.push(Box::new(f));
         self
     }
 
@@ -139,6 +151,17 @@ impl<'a> UnipropsBuilder<'a> {
             quote! {}
         };
 
+        let mut custom_tokens = proc_macro2::TokenStream::new();
+
+        for generator in self.custom_generators {
+            let generated_str = generator(&raw_data);
+            let parsed: TokenStream = generated_str
+                .parse()
+                .expect("Custom generator returned invalid Rust-code");
+
+            custom_tokens.extend(parsed);
+        }
+
         let tokens = quote! {
             #[allow(clippy::all)]
             #[allow(dead_code)]
@@ -147,6 +170,7 @@ impl<'a> UnipropsBuilder<'a> {
             pub mod uniprops {
                 #categories
                 #digits
+                #custom_tokens
             }
         };
 
