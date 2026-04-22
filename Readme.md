@@ -4,7 +4,7 @@
 [![Docs.rs](https://docs.rs/uniprops-gen/badge.svg)](https://docs.rs/uniprops-gen)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/MIT)
 
-**UniProps** is a blazing-fast, compile-time Unicode property generator for Rust. It generates highly optimized static tables to look up Unicode General Categories and Numeric Values with zero runtime allocation.
+**UniProps** is a blazing-fast, compile-time Unicode property generator for Rust. It generates highly optimized static tables to look up Unicode General Categories, Numeric Values, and custom properties with zero runtime allocation.
 
 > **Note:** This project is a complete evolution and fork of my previous project, `dec-from-char`. While `dec-from-char` focused solely on parsing decimal digits, **UniProps** generalizes this approach. It allows you to generate efficient data structures for *any* subset of Unicode data directly via `build.rs`.
 
@@ -13,10 +13,13 @@
 
 ## 🚀 Features
 
-*   **Unmatched Performance:**
-    *   **Categories:** Uses a **Two-Level Trie** (Index Table + Data Blocks) for true **O(1)** access.
+*   **Unmatched Performance with Multiple Strategies:**
+    *   **Trie (O(1)):** Uses a Two-Level Trie (Index Table + Data Blocks) for extremely fast, constant-time lookups. Best for dense Unicode data.
+    *   **BSearch (O(log N)):** Uses a compact binary search array. Highly recommended when you heavily filter the dataset, allowing the lookup tables to sit comfortably in the CPU's L1 cache for maximum speed.
 *   **Zero Runtime Allocation:** All data is baked into your binary as standard `static` arrays.
-*   **Customizable:** Generate only what you need. Filter by specific categories (e.g., only `Nd` digits) to drastically reduce your binary size.
+*   **Customizable & Extensible:** 
+    *   Filter by specific categories (e.g., only `Nd` digits) to drastically reduce your binary size.
+    *   **Custom Generators:** Inject your own logic to parse and extract specific properties (like bidi categories or case mappings) straight into the generated module.
 *   **Safe API:** Generated code relies on safe wrappers around bounded `unsafe` lookups, ensuring maximum speed without bounds-checking overhead, while remaining 100% memory safe.
 
 ## ⚡ Benchmarks
@@ -31,9 +34,9 @@
 
 Add `uniprops-gen` to your `[build-dependencies]` in `Cargo.toml`. 
 
-```toml[package]
+```toml
 [build-dependencies]
-uniprops-gen = "0.3.0" # Use the latest version
+uniprops-gen = "0.3" # Use the latest version
 ```
 
 ## 🛠 Usage
@@ -44,20 +47,31 @@ Create a `build.rs` file in your project root. Use the builder to generate your 
 
 ```rust
 // build.rs
-use uniprops-gen::UnipropsBuilder;
+use uniprops_gen::{UnipropsBuilder, LookupStrategy};
 
 fn main() {
-    // Generate everything (Categories + Digits)
+    // 1. Generate everything with O(1) Trie lookup (Default)
     UnipropsBuilder::new()
         .out_file("unicode_data.rs")
         .with_categories(true)
         .with_digits(true)
         .build();
 
-    // OR: Generate a specialized table (e.g., only Decimal Numbers)
+    // 2. Generate a specialized BSearch table for a filtered subset
+    // BSearch is perfectly suited for sparse data and saves massive amounts of binary size.
     UnipropsBuilder::new()
-        .out_file("filtered_digits.rs")
+        .out_file("filtered_data.rs")
+        .with_lookup_strategy(LookupStrategy::BSearch)
         .filter(|record| record.general_category == "Nd")
+        .build();
+        
+    // 3. Inject your own custom property generators!
+    UnipropsBuilder::new()
+        .out_file("custom_data.rs")
+        .with_custom(|records| {
+            let count = records.len();
+            format!("pub const VALID_CODEPOINTS_COUNT: usize = {};", count)
+        })
         .build();
 }
 ```
