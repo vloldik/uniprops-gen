@@ -39,9 +39,57 @@ pub struct UnicodeRecord {
     pub simple_titlecase_mapping: Option<String>,
 }
 
+/// Defines the internal data structure and algorithm used for character property lookups.
+///
+/// This enum allows you to explicitly control the trade-off between binary size,
+/// memory access patterns, and runtime lookup performance based on the shape of your data.
+///
+/// # Mini-Guide: Trie vs BSearch
+///
+/// 1. **Default Unicode Data (Dense)**: Use `Trie { shift: 8 }`. It provides `O(1)` performance
+///    and the array size is acceptable (~30-40KB for typical categories).
+/// 2. **Heavily Filtered Data (Sparse)**: If your `.filter()` closure discards ~90-99% of
+///    codepoints (e.g., keeping only identifiers, or a specific script), **use `BSearch`**.
+///    The resulting array will be tiny, and the binary search will comfortably sit in the L1 cache,
+///    often outperforming `Trie` by avoiding dependent memory fetches.
 #[derive(Debug, Clone, Copy)]
 pub enum LookupStrategy {
+    /// Generates a sorted array of contiguous codepoint ranges and performs a binary search (`O(log N)`).
+    ///
+    /// **Performance Characteristics:**
+    /// While mathematically `O(log N)` is slower than `O(1)`, `BSearch` can actually be **faster**
+    /// than a `Trie` in sparse datasets. If you heavily filter the `UnicodeRecord`s, the number of
+    /// contiguous ranges (`N`) drops significantly.
+    ///
+    /// If `N` is small (e.g., under 30-50 ranges), the entire array fits into a single or a few
+    /// CPU cache lines (L1 cache). A binary search over hot L1 cache is extremely fast and avoids
+    /// the pointer-chasing (dependent loads) inherent to the `Trie` strategy.
+    ///
+    /// **When to use:**
+    /// - You apply strict filters (e.g., keeping only ASCII + specific Unicode blocks).
+    /// - You are targeting memory-constrained environments (Wasm, embedded).
     BSearch,
+
+    /// Generates a two-level pre-computed array (Trie) for `O(1)` constant-time lookups.
+    ///
+    /// This strategy chunks the codepoint space into blocks of size `2^shift`. It generates an
+    /// `INDICES` array pointing to deduplicated `BLOCKS`.
+    ///
+    /// **Performance Characteristics:**
+    /// Lookups require exactly two memory reads: one from the `INDICES` array, and a dependent read
+    /// from the `BLOCKS` array. For large, dense datasets (like the full Unicode categories list),
+    /// this reliably beats binary search. However, if the data is not in the CPU cache, these
+    /// two dependent loads can cause cache misses.
+    ///
+    /// **Choosing the `shift` value:**
+    /// The `shift` dictates the block size (`2^shift`).
+    /// - **`shift = 8` (256 codepoints per block)**: The universally recommended default. It perfectly
+    ///   balances the size of the index array and the efficiency of block deduplication.
+    /// - **Smaller shift (e.g., `4` -> 16 codepoints)**: Generates many small blocks. Deduplication
+    ///   is highly precise, but the `INDICES` array becomes massive (up to 69,632 elements).
+    /// - **Larger shift (e.g., `12` -> 4096 codepoints)**: `INDICES` array is tiny, but deduplication
+    ///   suffers. A single valid codepoint in a block forces the allocation of 4,095 empty slots
+    ///   (unless an identical block already exists).
     Trie { shift: u8 },
 }
 
@@ -110,6 +158,14 @@ impl<'a> UnipropsBuilder<'a> {
         self
     }
 
+    /// Overrides the internal lookup strategy for the generated category tables.
+    ///
+    /// By default, the builder uses `LookupStrategy::Trie { shift: 8 }` which is optimized for
+    /// the full Unicode dataset.
+    ///
+    /// You should override this to `LookupStrategy::BSearch` if you are applying an aggressive
+    /// `.filter()` closure that discards the majority of codepoints. In such scenarios, `BSearch`
+    /// dramatically shrinks the compiled binary size and often executes faster due to L1 cache locality.
     pub fn with_lookup_strategy(mut self, lookup_strategy: LookupStrategy) -> Self {
         self.lookup_strategy = lookup_strategy;
         self
@@ -127,6 +183,22 @@ impl<'a> UnipropsBuilder<'a> {
         self
     }
 
+    /// Registers a custom code generator function.
+    ///
+    /// Allows injecting custom properties extracted from `UnicodeData.txt` into the generated module
+    /// without modifying the core builder.
+    ///
+    /// The closure receives a slice of all parsed and **filtered** `UnicodeRecord`s. It must return
+    /// a `String` containing valid Rust code (e.g., custom `static` arrays or `const`s). This string
+    /// is parsed into a `TokenStream` and embedded directly into the final `uniprops` module.
+    ///
+    /// # Example
+    /// ```ignore
+    /// builder.with_custom(|records| {
+    ///     let count = records.len();
+    ///     format!("pub const VALID_CODEPOINTS_COUNT: usize = {};", count)
+    /// })
+    /// ```
     pub fn with_custom<F>(mut self, f: F) -> Self
     where
         F: Fn(&[UnicodeRecord]) -> String + 'a,
