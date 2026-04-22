@@ -1,4 +1,4 @@
-FROM registry-1.docker.io/library/rust:1.93.0-bookworm
+FROM registry-1.docker.io/library/rust:1.93.0-trixie
 
 ARG VARIANT=1.93.0-bookworm
 ARG USERNAME=vscode

@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - master
-  workflow_dispatch: # Позволяет запускать вручную из вкладки Actions
+  workflow_dispatch: 
 
 permissions:
   contents: write 
