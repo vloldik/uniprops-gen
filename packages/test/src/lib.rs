@@ -17,6 +17,10 @@ pub mod custom {
     include!(concat!(env!("OUT_DIR"), "/custom.rs"));
 }
 
+pub mod bsearch_nd {
+    include!(concat!(env!("OUT_DIR"), "/filtered_digits_bsearch.rs"));
+}
+
 #[cfg(test)]
 mod tests {
     use std::char;
@@ -47,6 +51,21 @@ mod tests {
         assert_eq!(Category::from_char('∑'), Some(Category::Sm));
 
         assert_eq!(Category::from_char('\u{200B}'), Some(Category::Cf));
+    }
+
+    #[test]
+    fn test_bsearch_category_lookup() {
+        use bsearch_nd::uniprops::Category;
+
+        assert_eq!(Category::from_char('\u{0030}'), Category::Nd.into());
+
+        assert_eq!(Category::from_char('\u{002F}'), None); // '/'
+
+        assert_eq!(Category::from_char('\u{1D7E1}'), Category::Nd.into());
+
+        assert_eq!(Category::from_char('\u{1D7E2}'), Category::Nd.into());
+
+        assert_eq!(Category::from_char('\u{1D800}'), None);
     }
 
     #[test]

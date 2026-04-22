@@ -1,10 +1,17 @@
-use uniprops_gen::UnipropsBuilder;
+use uniprops_gen::{LookupStrategy, UnipropsBuilder};
 
 fn main() {
     UnipropsBuilder::new().build();
     UnipropsBuilder::new()
         .filter(|r| r.general_category == "Nd")
         .out_file("filtered_digits.rs")
+        .build();
+
+    UnipropsBuilder::new()
+        .filter(|r| r.general_category == "Nd")
+        .with_digits(false)
+        .with_lookup_strategy(LookupStrategy::BSearch)
+        .out_file("filtered_digits_bsearch.rs")
         .build();
 
     UnipropsBuilder::new()

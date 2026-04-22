@@ -39,6 +39,19 @@ pub struct UnicodeRecord {
     pub simple_titlecase_mapping: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum LookupStrategy {
+    BSearch,
+    Trie { shift: u8 },
+}
+
+#[derive(Debug, Clone)]
+struct MappingGroup {
+    general_category: String,
+    start: u32,
+    end: u32,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PositionTag {
     First,
@@ -68,6 +81,7 @@ pub struct UnipropsBuilder<'a> {
     out_name: String,
     gen_categories: bool,
     gen_digits: bool,
+    lookup_strategy: LookupStrategy,
     filter: Box<dyn Fn(&UnicodeRecord) -> bool + 'a>,
     custom_generators: Vec<CustomGenerator<'a>>,
 }
@@ -82,6 +96,7 @@ impl<'a> UnipropsBuilder<'a> {
             out_name: "generated_uniprops.rs".to_string(),
             gen_categories: true,
             gen_digits: true,
+            lookup_strategy: LookupStrategy::Trie { shift: 8 },
             filter: Box::new(|_| true),
             custom_generators: Default::default(),
         }
@@ -92,6 +107,11 @@ impl<'a> UnipropsBuilder<'a> {
     /// The file will be created in the directory specified by the `OUT_DIR` environment variable.
     pub fn out_file(mut self, name: &str) -> Self {
         self.out_name = name.to_string();
+        self
+    }
+
+    pub fn with_lookup_strategy(mut self, lookup_strategy: LookupStrategy) -> Self {
+        self.lookup_strategy = lookup_strategy;
         self
     }
 
@@ -140,7 +160,10 @@ impl<'a> UnipropsBuilder<'a> {
         let raw_data = self.parse_data();
 
         let categories = if self.gen_categories {
-            self.generate_categories(&raw_data)
+            match self.lookup_strategy {
+                LookupStrategy::BSearch => self.generate_bsearch_impl(&raw_data),
+                LookupStrategy::Trie { shift } => self.generate_trie_impl(shift, &raw_data),
+            }
         } else {
             quote! {}
         };
@@ -200,17 +223,7 @@ impl<'a> UnipropsBuilder<'a> {
         raw_data
     }
 
-    fn generate_categories(&self, raw_data: &[UnicodeRecord]) -> TokenStream {
-        const SHIFT: u32 = 8;
-        const SIZE: u32 = 1 << SHIFT;
-        const MASK: u32 = SIZE - 1;
-
-        struct MappingGroup {
-            general_category: String,
-            start: u32,
-            end: u32,
-        }
-
+    fn get_mapping_groups(raw_data: &[UnicodeRecord]) -> Vec<MappingGroup> {
         let mut mapping_groups = Vec::new();
 
         if !raw_data.is_empty() {
@@ -240,19 +253,99 @@ impl<'a> UnipropsBuilder<'a> {
             mapping_groups.push(current_group);
         }
 
-        let mut unique_categories: Vec<String> = mapping_groups
+        mapping_groups
+    }
+
+    fn get_unique_categories_sorted(mapping_groups: &[MappingGroup]) -> Vec<String> {
+        let mut categories = mapping_groups
             .iter()
             .map(|g| g.general_category.clone())
             .collect::<HashSet<_>>()
             .into_iter()
-            .collect();
+            .collect::<Vec<_>>();
 
-        unique_categories.sort();
+        categories.sort();
+        categories
+    }
 
+    fn generate_category_enum(unique_categories: &[String]) -> proc_macro2::TokenStream {
         let enum_variants = unique_categories.iter().map(|cat| {
             let ident = format_ident!("{}", cat);
             quote! { #ident }
         });
+
+        quote! {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum Category {
+                #(#enum_variants),*
+            }
+        }
+    }
+
+    fn generate_bsearch_impl(&self, raw_data: &[UnicodeRecord]) -> TokenStream {
+        let mut mapping_groups = Self::get_mapping_groups(raw_data);
+        let unique_categories = Self::get_unique_categories_sorted(&mapping_groups);
+        let category_enum = Self::generate_category_enum(&unique_categories);
+
+        mapping_groups.sort_by(|a, b| a.start.cmp(&b.start));
+
+        let mapping_group_lookup = mapping_groups
+            .into_iter()
+            .map(|group| {
+                let enum_variant = format_ident!("{}", group.general_category);
+                let (start, end) = (group.start, group.end);
+
+                quote! {
+                    CategoryBounds { start: #start, end: #end, category: Category::#enum_variant }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let len = mapping_group_lookup.len();
+
+        quote! {
+            #category_enum
+
+            struct CategoryBounds {
+                start: u32,
+                end: u32,
+                category: Category,
+            }
+
+            static CATEGORY_LOOKUP: [CategoryBounds; #len] = [
+                #(#mapping_group_lookup),*
+            ];
+
+            impl Category {
+                #[inline(always)]
+                pub fn from_char(c: char) -> ::std::option::Option<Self> {
+                    CATEGORY_LOOKUP.binary_search_by(| g | {
+                        let code_point = c as u32;
+
+                        if code_point < g.start {
+                            ::core::cmp::Ordering::Greater
+                        } else if code_point > g.end {
+                            ::core::cmp::Ordering::Less
+                        } else {
+                            ::core::cmp::Ordering::Equal
+                        }
+                    })
+                    .ok()
+                    .map(| i |
+                        // SAFETY: We found an element with index i just now, it MUST be in array
+                        unsafe { CATEGORY_LOOKUP.get_unchecked(i) }.category
+                    )
+                }
+            }
+        }
+    }
+
+    fn generate_trie_impl(&self, shift: u8, raw_data: &[UnicodeRecord]) -> TokenStream {
+        let size: u32 = 1 << (shift as u32);
+        let mask: u32 = size - 1;
+        let mapping_groups = Self::get_mapping_groups(raw_data);
+        let unique_categories = Self::get_unique_categories_sorted(&mapping_groups);
+        let category_enum = Self::generate_category_enum(&unique_categories);
 
         let max_codepoint: u32 = 0x10FFFF;
         let mut unique_blocks: Vec<Vec<Option<String>>> = Vec::new();
@@ -260,10 +353,10 @@ impl<'a> UnipropsBuilder<'a> {
         let mut group_iter = mapping_groups.iter();
         let mut current_group = group_iter.next();
 
-        for chunk_start in (0..=max_codepoint).step_by(SIZE as usize) {
-            let mut block = Vec::with_capacity(SIZE as usize);
+        for chunk_start in (0..=max_codepoint).step_by(size as usize) {
+            let mut block = Vec::with_capacity(size as usize);
 
-            for i in 0..SIZE {
+            for i in 0..size {
                 let cp = chunk_start + i;
                 while let Some(g) = current_group {
                     if cp > g.end {
@@ -293,10 +386,12 @@ impl<'a> UnipropsBuilder<'a> {
             }
         }
 
-        let index_type = if unique_blocks.len() <= 256 {
+        let index_type = if unique_blocks.len() <= (u8::MAX as usize) + 1 {
             quote! { u8 }
-        } else {
+        } else if unique_blocks.len() <= (u16::MAX as usize) + 1 {
             quote! { u16 }
+        } else {
+            quote! { compile_error!("Shift is too small, u16 overflow") }
         };
         let indices_tokens = indices.iter().map(|&idx| {
             if unique_blocks.len() <= 256 {
@@ -316,13 +411,10 @@ impl<'a> UnipropsBuilder<'a> {
             }
             None => quote! { None },
         });
-        let blocks_len = unique_blocks.len() * (SIZE as usize);
+        let blocks_len = unique_blocks.len() * (size as usize);
 
         quote! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-            pub enum Category {
-                #(#enum_variants),*
-            }
+            #category_enum
 
             static CATEGORY_INDICES:[#index_type; #indices_len] = [
                 #(#indices_tokens),*
@@ -338,13 +430,13 @@ impl<'a> UnipropsBuilder<'a> {
                     let cp = c as u32;
                     if cp > #max_codepoint { return None; }
 
-                    let index_idx = (cp >> #SHIFT) as usize;
+                    let index_idx = (cp >> #shift) as usize;
 
                     // SAFETY: Arrays are generated to cover up to 0x10FFFF
                     unsafe {
                         let block_idx = *CATEGORY_INDICES.get_unchecked(index_idx) as usize;
-                        let offset = (cp & #MASK) as usize;
-                        let final_pos = (block_idx << #SHIFT) + offset;
+                        let offset = (cp & #mask) as usize;
+                        let final_pos = (block_idx << #shift) + offset;
                         *CATEGORY_BLOCKS.get_unchecked(final_pos)
                     }
                 }
